@@ -386,6 +386,9 @@ def run_s2p(ops={}, db={}, server={}):
     else:
         if len(ops['h5py']):
             ops['input_format'] = 'h5'
+        elif len(ops['h5_file_list']):
+            print('LOL')
+            ops['input_format'] = 'h5'
         elif len(ops['nwb_file']):
             ops['input_format'] = 'nwb'
         elif ops.get('mesoscan'):
