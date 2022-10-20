@@ -138,10 +138,20 @@ def default_ops():
         'sig_baseline': 10.,  # smoothing constant for gaussian filter
         'prctile_baseline': 8.,  # optional (whether to use a percentile baseline)
         'neucoeff': .7,  # neuropil coefficient
+
+        # mjd
+        'extraction': True,
     }
 
+# given h5 file write binary
+def write_binary(h5_file, binary_file):
+    with h5py.File(h5_file, 'r') as f:
+        data = f['data'][:]
+    with open(binary_file, 'wb') as f:
+        f.write(data.tobytes())
 
-def run_plane(ops, ops_path=None, stat=None):
+
+def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
     """ run suite2p processing on a single binary file
 
     Parameters
@@ -163,7 +173,7 @@ def run_plane(ops, ops_path=None, stat=None):
     plane_times = {}
     
     # for running on server or on moved files, specify ops_path
-    if ops_path is not None:
+    if ops_path is not None and fast_bin_path is None:
         ops['save_path'] = os.path.split(ops_path)[0]
         ops['ops_path'] = ops_path 
         if len(ops['fast_disk'])==0 or ops['save_path']!=ops['fast_disk']:
@@ -175,6 +185,10 @@ def run_plane(ops, ops_path=None, stat=None):
                     ops['raw_file'] = os.path.join(ops['save_path'], 'data_raw.bin')
                 if 'raw_file_chan2' in ops:
                     ops['raw_file_chan2'] = os.path.join(ops['save_path'], 'data_chan2_raw.bin')
+    if fast_bin_path:
+        ops["do_registration"] = False # binary, no registration needed
+        np.save(os.path.join(ops['save_path'], 'ops.npy'), ops) # write first ops file
+        ops['reg_file'] = os.path.join(fast_bin_path, 'data.bin')
 
     # check if registration should be done
     if ops['do_registration']>0:
@@ -247,21 +261,25 @@ def run_plane(ops, ops_path=None, stat=None):
         print('----------- Total %0.2f sec.' % plane_times['detection'])
 
         ######## ROI EXTRACTION ##############
-        t11=time.time()
-        print('----------- EXTRACTION')
-        ops, stat, F, Fneu, F_chan2, Fneu_chan2 = extraction.create_masks_and_extract(ops, stat)
-        # save results
-        np.save(ops['ops_path'], ops)
-        fpath = ops['save_path']
-        np.save(os.path.join(fpath, 'stat.npy'), stat)
-        np.save(os.path.join(fpath,'F.npy'), F)
-        np.save(os.path.join(fpath,'Fneu.npy'), Fneu)
-        # if second channel, save F_chan2 and Fneu_chan2
-        if 'meanImg_chan2' in ops:
-            np.save(os.path.join(fpath, 'F_chan2.npy'), F_chan2)
-            np.save(os.path.join(fpath, 'Fneu_chan2.npy'), Fneu_chan2)
-        plane_times['extraction'] = time.time()-t11
-        print('----------- Total %0.2f sec.' % plane_times['extraction'])
+        if ops.get('extraction', True):
+            t11=time.time()
+            print('----------- EXTRACTION')
+            ops, stat, F, Fneu, F_chan2, Fneu_chan2 = extraction.create_masks_and_extract(ops, stat)
+            # save results
+            np.save(ops['ops_path'], ops)
+            fpath = ops['save_path']
+            np.save(os.path.join(fpath, 'stat.npy'), stat)
+            np.save(os.path.join(fpath,'F.npy'), F)
+            np.save(os.path.join(fpath,'Fneu.npy'), Fneu)
+            # if second channel, save F_chan2 and Fneu_chan2
+            if 'meanImg_chan2' in ops:
+                np.save(os.path.join(fpath, 'F_chan2.npy'), F_chan2)
+                np.save(os.path.join(fpath, 'Fneu_chan2.npy'), Fneu_chan2)
+            plane_times['extraction'] = time.time()-t11
+            print('----------- Total %0.2f sec.' % plane_times['extraction'])
+        else:
+            print("WARNING: skipping extraction (ops['extraction']=False)")
+            F, Fneu = np.ndarray(0), np.ndarray(0)
 
         ######## ROI CLASSIFICATION ##############
         t11=time.time()
@@ -330,6 +348,44 @@ def run_plane(ops, ops_path=None, stat=None):
     np.save(ops['ops_path'], ops)
     return ops
 
+def write_binary(ops):
+    t0 = time.time()
+    if len(ops['h5py']):
+        ops['input_format'] = 'h5'
+    elif len(ops['h5_file_list']):
+        print('LOL')
+        ops['input_format'] = 'h5'
+    elif len(ops['nwb_file']):
+        ops['input_format'] = 'nwb'
+    elif ops.get('mesoscan'):
+        ops['input_format'] = 'mesoscan'
+    elif HAS_HAUS:
+        ops['input_format'] = 'haus'
+    elif not 'input_format' in ops:
+        ops['input_format'] = 'tif'
+
+
+    # copy file format to a binary file
+    convert_funs = {
+        'h5': io.h5py_to_binary,
+        'nwb': io.nwb_to_binary,
+        'sbx': io.sbx_to_binary,
+        'mesoscan': io.mesoscan_to_binary,
+        'haus': lambda ops: haussio.load_haussio(ops['data_path'][0]).tosuite2p(ops.copy()),
+        'bruker': io.ome_to_binary,
+    }
+    if ops['input_format'] in convert_funs:
+        ops0 = convert_funs[ops['input_format']](ops.copy())
+        if isinstance(ops, list):
+            ops0 = ops0[0]
+    else:
+        ops0 = io.tiff_to_binary(ops.copy())
+    plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
+    ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
+    print('time {:0.2f} sec. Wrote {} frames per binary for {} planes'.format(
+                time.time() - t0, ops0['nframes'], len(plane_folders)
+        ))
+    return ops, ops_paths
 
 def run_s2p(ops={}, db={}, server={}):
     """ run suite2p pipeline
@@ -356,7 +412,6 @@ def run_s2p(ops={}, db={}, server={}):
     ops = {**default_ops(), **ops, **db}
     if isinstance(ops['diameter'], list) and len(ops['diameter'])>1 and ops['aspect']==1.0:
         ops['aspect'] = ops['diameter'][0] / ops['diameter'][1]
-    print(db)
     if 'save_path0' not in ops or len(ops['save_path0'])==0:
         if ops.get('h5py'):
             ops['save_path0'] = os.path.split(ops['h5py'])[0]
@@ -370,56 +425,38 @@ def run_s2p(ops={}, db={}, server={}):
         ops['save_folder'] = 'suite2p'
     save_folder = os.path.join(ops['save_path0'], ops['save_folder'])
     os.makedirs(save_folder, exist_ok=True)
-    plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
-    if len(plane_folders) > 0:
-        ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
-        ops_found_flag = all([os.path.isfile(ops_path) for ops_path in ops_paths])
-        binaries_found_flag = all([os.path.isfile(os.path.join(f, 'data_raw.bin')) or os.path.isfile(os.path.join(f, 'data.bin')) 
-                                    for f in plane_folders])
-        files_found_flag = ops_found_flag and binaries_found_flag
-    else:
-        files_found_flag = False
-    
-    if files_found_flag:
-        print(f'FOUND BINARIES AND OPS IN {ops_paths}')
-    # if not set up files and copy tiffs/h5py to binary
-    else:
-        if len(ops['h5py']):
-            ops['input_format'] = 'h5'
-        elif len(ops['h5_file_list']):
-            print('LOL')
-            ops['input_format'] = 'h5'
-        elif len(ops['nwb_file']):
-            ops['input_format'] = 'nwb'
-        elif ops.get('mesoscan'):
-            ops['input_format'] = 'mesoscan'
-        elif HAS_HAUS:
-            ops['input_format'] = 'haus'
-        elif not 'input_format' in ops:
-            ops['input_format'] = 'tif'
+    # plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
+    # if len(plane_folders) > 0:
+    #     ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
+    #     print(ops_paths)
+    #     fast_bin_path = ops['fast_disk'] + '/suite2p/plane0'
+    #     binaries_found_flag = all([os.path.isfile(os.path.join(fast_bin_path, 'data.bin'))])
+    #     ops_found_flag = all([os.path.isfile(ops_path) for ops_path in ops_paths])
+    #     #binaries_found_flag = all([os.path.isfile(os.path.join(f, 'data_raw.bin')) or os.path.isfile(os.path.join(f, 'data.bin')) 
+    #     #                            for f in plane_folders])
+    #     #binaries_found_flag = 
+    #     files_found_flag = ops_found_flag and binaries_found_flag
+    # else:
+    #     files_found_flag = False
+    #     fast_bin_path = None
+    #     print("NO BINARIES FOUND")
+            
+    # check if fast_bin_path exists
+    if 'fast_bin_path' in ops and len(ops['fast_bin_path'])>0:
+        fast_bin_path = ops['fast_bin_path'] + '/suite2p/plane0'
+        # check if data.bin exists
+        if os.path.isdir(fast_bin_path):
+            binaries_found_flag = os.path.isfile(os.path.join(fast_bin_path, 'data.bin'))
+            print(f'FOUND BINARIES IN {fast_bin_path}')
 
-
-        # copy file format to a binary file
-        convert_funs = {
-            'h5': io.h5py_to_binary,
-            'nwb': io.nwb_to_binary,
-            'sbx': io.sbx_to_binary,
-            'mesoscan': io.mesoscan_to_binary,
-            'haus': lambda ops: haussio.load_haussio(ops['data_path'][0]).tosuite2p(ops.copy()),
-            'bruker': io.ome_to_binary,
-        }
-        if ops['input_format'] in convert_funs:
-            ops0 = convert_funs[ops['input_format']](ops.copy())
-            if isinstance(ops, list):
-                ops0 = ops0[0]
+            plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
+            ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
         else:
-            ops0 = io.tiff_to_binary(ops.copy())
-        plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
-        ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
-        print('time {:0.2f} sec. Wrote {} frames per binary for {} planes'.format(
-                  time.time() - t0, ops0['nframes'], len(plane_folders)
-            ))
+            return
+            ops, ops_paths = write_binary(ops)
 
+
+        
     if ops.get('multiplane_parallel'):
         if server:
             if 'fnc' in server.keys():
@@ -448,7 +485,7 @@ def run_s2p(ops={}, db={}, server={}):
                         op[key] = ops[key]
             
             print('>>>>>>>>>>>>>>>>>>>>> PLANE %d <<<<<<<<<<<<<<<<<<<<<<'%ipl)
-            op = run_plane(op, ops_path=ops_path)
+            op = run_plane(op, ops_path=ops_path, fast_bin_path=fast_bin_path)
             print('Plane %d processed in %0.2f sec (can open in GUI).' % 
                     (ipl, op['timing']['total_plane_runtime']))  
         run_time = time.time()-t0
