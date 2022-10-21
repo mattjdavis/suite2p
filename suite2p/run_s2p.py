@@ -187,8 +187,9 @@ def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
                     ops['raw_file_chan2'] = os.path.join(ops['save_path'], 'data_chan2_raw.bin')
     if fast_bin_path:
         ops["do_registration"] = False # binary, no registration needed
-        np.save(os.path.join(ops['save_path'], 'ops.npy'), ops) # write first ops file
+        #np.save(os.path.join(ops['save_path'], 'ops.npy'), ops) # write first ops file
         ops['reg_file'] = os.path.join(fast_bin_path, 'data.bin')
+        np.save(ops['ops_path'], ops)
 
     # check if registration should be done
     if ops['do_registration']>0:
@@ -348,7 +349,7 @@ def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
     np.save(ops['ops_path'], ops)
     return ops
 
-def write_binary(ops):
+def write_binary(ops, save_folder):
     t0 = time.time()
     if len(ops['h5py']):
         ops['input_format'] = 'h5'
@@ -441,20 +442,37 @@ def run_s2p(ops={}, db={}, server={}):
     #     fast_bin_path = None
     #     print("NO BINARIES FOUND")
             
-    # check if fast_bin_path exists
-    if 'fast_bin_path' in ops and len(ops['fast_bin_path'])>0:
-        fast_bin_path = ops['fast_bin_path'] + '/suite2p/plane0'
+    # MJD LOGIC
+    if 'fast_bin_path' in ops and ops['fast_bin_path'] is not None:
+
+        # TODO MAKE SURE FAST_BIN_PATH EXISTS
+        from pathlib import Path
+        fast_bin_path = Path(ops['fast_bin_path']) / 'suite2p' / 'plane0'
+        
+        # load old ops
+        old_ops = np.load(fast_bin_path / 'ops.npy', allow_pickle=True).item()
+        ops = {**old_ops, **ops}
+        
         # check if data.bin exists
         if os.path.isdir(fast_bin_path):
-            binaries_found_flag = os.path.isfile(os.path.join(fast_bin_path, 'data.bin'))
-            print(f'FOUND BINARIES IN {fast_bin_path}')
 
+            if not os.path.exists(os.path.join(save_folder, 'plane0')):
+                os.makedirs(os.path.join(save_folder, 'plane0'))
+            ops["ops_path"] = os.path.join(save_folder, 'plane0', 'ops.npy')
+            
+            # create new ops
+            np.save(ops["ops_path"], ops)
+            
+            # check if data.bin exists
+            if os.path.isfile(os.path.join(fast_bin_path, 'data.bin')):
+                print(f'FOUND BINARIES IN {fast_bin_path}')
+            else:
+                ops, ops_paths = write_binary(ops,save_folder)
+                np.save(fast_bin_path, ops)
+
+            # find file to iterate later (may not be necessary)
             plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
             ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
-        else:
-            return
-            ops, ops_paths = write_binary(ops)
-
 
         
     if ops.get('multiplane_parallel'):
@@ -486,8 +504,8 @@ def run_s2p(ops={}, db={}, server={}):
             
             print('>>>>>>>>>>>>>>>>>>>>> PLANE %d <<<<<<<<<<<<<<<<<<<<<<'%ipl)
             op = run_plane(op, ops_path=ops_path, fast_bin_path=fast_bin_path)
-            print('Plane %d processed in %0.2f sec (can open in GUI).' % 
-                    (ipl, op['timing']['total_plane_runtime']))  
+            #print('Plane %d processed in %0.2f sec (can open in GUI).' % 
+            #        (ipl, op['timing']['total_plane_runtime']))  
         run_time = time.time()-t0
         print('total = %0.2f sec.' % run_time)
 
