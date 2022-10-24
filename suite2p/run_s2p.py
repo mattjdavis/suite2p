@@ -144,13 +144,14 @@ def default_ops():
     }
 
 # given h5 file write binary
-def write_binary(h5_file, binary_file):
+def write_binary_WIP(h5_file, binary_file):
     with h5py.File(h5_file, 'r') as f:
         data = f['data'][:]
     with open(binary_file, 'wb') as f:
         f.write(data.tobytes())
 
 
+from pathlib import Path
 def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
     """ run suite2p processing on a single binary file
 
@@ -189,7 +190,14 @@ def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
         ops["do_registration"] = False # binary, no registration needed
         #np.save(os.path.join(ops['save_path'], 'ops.npy'), ops) # write first ops file
         ops['reg_file'] = os.path.join(fast_bin_path, 'data.bin')
-        np.save(ops['ops_path'], ops)
+        np.save(ops['ops_path'], ops) # save to BINARY path
+        print(f"Wrote ops file to {ops['ops_path']}, (BINARY s2p run)")
+
+        # This is NEW data folder, only works single plane.
+        # s2p output files save here (stat.npy, F.npy, Fneu.npy, etc)
+        plane = 'plane0'
+        ops['save_path'] = os.path.join(ops['save_path0'], ops['save_folder'] ,  plane)
+        print(f"Saving new data to: {ops['save_path']}")
 
     # check if registration should be done
     if ops['do_registration']>0:
@@ -386,6 +394,10 @@ def write_binary(ops, save_folder):
     print('time {:0.2f} sec. Wrote {} frames per binary for {} planes'.format(
                 time.time() - t0, ops0['nframes'], len(plane_folders)
         ))
+
+    # save old ops0
+    np.save(os.path.join(ops["fast_bin_path"], 'ops.npy'), ops0)
+
     return ops, ops_paths
 
 def run_s2p(ops={}, db={}, server={}):
@@ -444,36 +456,47 @@ def run_s2p(ops={}, db={}, server={}):
             
     # MJD LOGIC
     if 'fast_bin_path' in ops and ops['fast_bin_path'] is not None:
-
-        # TODO MAKE SURE FAST_BIN_PATH EXISTS
         from pathlib import Path
-        fast_bin_path = Path(ops['fast_bin_path']) / 'suite2p' / 'plane0'
+        fast_bin_path = os.path.join(ops['fast_bin_path'],  'plane0')
         
         # load old ops
-        old_ops = np.load(fast_bin_path / 'ops.npy', allow_pickle=True).item()
+        
+        old_ops = np.load(os.path.join(fast_bin_path, 'ops.npy'), allow_pickle=True).item()
         ops = {**old_ops, **ops}
         
         # check if data.bin exists
         if os.path.isdir(fast_bin_path):
-
+            
+            # make new-data save folder (plane0 only)
             if not os.path.exists(os.path.join(save_folder, 'plane0')):
                 os.makedirs(os.path.join(save_folder, 'plane0'))
+
+            # op now new-data save folder
             ops["ops_path"] = os.path.join(save_folder, 'plane0', 'ops.npy')
-            
-            # create new ops
             np.save(ops["ops_path"], ops)
             
             # check if data.bin exists
             if os.path.isfile(os.path.join(fast_bin_path, 'data.bin')):
                 print(f'FOUND BINARIES IN {fast_bin_path}')
             else:
-                ops, ops_paths = write_binary(ops,save_folder)
-                np.save(fast_bin_path, ops)
-
+                print(f'NO BINARIES FOUND IN {fast_bin_path}')
+                fast_bin_path = None
+            
             # find file to iterate later (may not be necessary)
             plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
             ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
+    else:
+        ops["fast_bin_path"] = os.path.join(ops['fast_disk'], 'plane0')
+        ops, ops_paths = write_binary(ops, save_folder)
+        
 
+        # make new-data save folder (plane0 only)
+        if not os.path.exists(ops["fast_bin_path"]):
+            os.makedirs(ops["fast_bin_path"])
+        
+    
+        fast_bin_path = ops["fast_bin_path"] # may delete this later, use ops
+        #np.save(os.path.join(ops["fast_bin_path"], 'ops.npy'), ops)
         
     if ops.get('multiplane_parallel'):
         if server:
