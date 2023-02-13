@@ -229,7 +229,7 @@ def phasecorr(data: np.ndarray, maskMul, maskOffset, cfRefImg, snr_thresh, NRsm,
     return ymax1, xmax1, cmax1
 
 
-@njit(['(int16[:, :],float32[:,:], float32[:,:], float32[:,:])', 
+@njit(['(int16[:, :],float32[:,:], float32[:,:], float32[:,:])', #windows uint16
         '(float32[:, :],float32[:,:], float32[:,:], float32[:,:])'], cache=True)
 def map_coordinates(I, yc, xc, Y) -> None:
     """

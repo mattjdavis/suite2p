@@ -1,4 +1,5 @@
 import time
+import os
 from os import path
 from typing import Dict, Any
 from warnings import warn
@@ -403,6 +404,19 @@ def register_binary(ops: Dict[str, Any], refImg=None, raw=True):
                     ichan=True
                 )
                 io.save_tiff(mov=frames, fname=fname)
+            # MJD ADD
+            if ops['save_segmented_tiff']:
+                print('SEGMENTED TIFF: saving...')
+                t0 = time.time()
+                fname = os.path.join(ops['save_path'], '12_avg_segmented.tif')
+
+                # chunk frames into 12 segments, and take mean of each segment
+                chunks = np.array_split(frames, 12)
+                segmented_frames = [np.mean(chunk, axis=0) for chunk in chunks]
+                segmented_frames = np.array(segmented_frames)
+                io.save_tiff(mov=segmented_frames, fname=fname)
+                print('SEGMENTED TIFF: saved in %0.2fs'%(time.time()-t0))
+
             if (k+1)%4==0:
                 print('Registered %d/%d in %0.2fs'%(min((k+1)*ops['batch_size'], ops['nframes']), ops['nframes'], time.time()-t0))
 

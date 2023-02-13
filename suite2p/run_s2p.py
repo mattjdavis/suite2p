@@ -20,7 +20,7 @@ except ImportError:
 
 from functools import partial
 from pathlib import Path
-print = partial(print,flush=True)
+print = partial(print, flush=True)
 
 def default_ops():
     """ default options to run pipeline """
@@ -141,6 +141,7 @@ def default_ops():
 
         # mjd
         'extraction': True,
+        'save_segmented_tiff': False
     }
 
 # given h5 file write binary
@@ -177,7 +178,7 @@ def run_plane(ops, ops_path=None, stat=None, fast_bin_path = None):
     if ops_path is not None and fast_bin_path is None:
         ops['save_path'] = os.path.split(ops_path)[0]
         ops['ops_path'] = ops_path 
-        if len(ops['fast_disk'])==0 or ops['save_path']!=ops['fast_disk']:
+        if len(ops['fast_disk']) == 0 or ops['save_path']!=ops['fast_disk']:
             if os.path.exists(os.path.join(ops['save_path'], 'data.bin')):
                 ops['reg_file'] = os.path.join(ops['save_path'], 'data.bin')
                 if 'reg_file_chan2' in ops:
@@ -396,7 +397,8 @@ def write_binary(ops, save_folder):
         ))
 
     # save old ops0
-    np.save(os.path.join(ops["fast_bin_path"], 'ops.npy'), ops0)
+    if ops["fast_bin_path"] is not None:
+        np.save(os.path.join(ops["fast_bin_path"], 'ops.npy'), ops0)
 
     return ops, ops_paths
 
@@ -457,7 +459,7 @@ def run_s2p(ops={}, db={}, server={}):
     # MJD LOGIC
     if 'fast_bin_path' in ops and ops['fast_bin_path'] is not None:
         from pathlib import Path
-        fast_bin_path = os.path.join(ops['fast_bin_path'],  'plane0')
+        fast_bin_path = os.path.join(ops['fast_bin_path'], 'plane0')
         
         # load old ops
         
@@ -485,17 +487,20 @@ def run_s2p(ops={}, db={}, server={}):
             # find file to iterate later (may not be necessary)
             plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
             ops_paths = [os.path.join(f, 'ops.npy') for f in plane_folders]
+    
+    # deleted for WORK ON HPC
     else:
-        ops["fast_bin_path"] = os.path.join(ops['fast_disk'], 'plane0')
+    #     ops["fast_bin_path"] = os.path.join(ops['fast_disk'], 'plane0')
         ops, ops_paths = write_binary(ops, save_folder)
+        fast_bin_path = ops["fast_bin_path"]
         
 
-        # make new-data save folder (plane0 only)
-        if not os.path.exists(ops["fast_bin_path"]):
-            os.makedirs(ops["fast_bin_path"])
+    #     # make new-data save folder (plane0 only)
+    #     if not os.path.exists(ops["fast_bin_path"]):
+    #         os.makedirs(ops["fast_bin_path"])
         
     
-        fast_bin_path = ops["fast_bin_path"] # may delete this later, use ops
+    #     fast_bin_path = ops["fast_bin_path"] # may delete this later, use ops
         #np.save(os.path.join(ops["fast_bin_path"], 'ops.npy'), ops)
         
     if ops.get('multiplane_parallel'):
