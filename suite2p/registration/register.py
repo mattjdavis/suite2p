@@ -379,6 +379,7 @@ def register_binary(ops: Dict[str, Any], refImg=None, raw=True):
     
     ### ------------- register binary to reference image ------------ ###
 
+    all_frames = np.zeros((ops['nframes'], ops['Ly'], ops['Lx']), dtype=np.int16)
     mean_img = np.zeros((ops['Ly'], ops['Lx']))
     rigid_offsets, nonrigid_offsets = [], []
     with io.BinaryFile(Ly=ops['Ly'], Lx=ops['Lx'],
@@ -396,29 +397,73 @@ def register_binary(ops: Dict[str, Any], refImg=None, raw=True):
 
             f.write(frames)
             if (ops['reg_tif'] if ops['functional_chan'] == ops['align_by_chan'] else ops['reg_tif_chan2']):
-                fname = io.generate_tiff_filename(
+                tiff_fname = io.generate_tiff_filename(
                     functional_chan=ops['functional_chan'],
                     align_by_chan=ops['align_by_chan'],
-                    save_path=ops['save_path'],
+                    save_path = ops['fast_disk'],  # save_path=ops['save_path'], # MJD ADD
                     k=k,
                     ichan=True
                 )
-                io.save_tiff(mov=frames, fname=fname)
-            # MJD ADD
-            if ops['save_segmented_tiff']:
-                print('SEGMENTED TIFF: saving...')
-                t0 = time.time()
-                fname = os.path.join(ops['save_path'], '12_avg_segmented.tif')
 
-                # chunk frames into 12 segments, and take mean of each segment
-                chunks = np.array_split(frames, 12)
-                segmented_frames = [np.mean(chunk, axis=0) for chunk in chunks]
-                segmented_frames = np.array(segmented_frames)
-                io.save_tiff(mov=segmented_frames, fname=fname)
-                print('SEGMENTED TIFF: saved in %0.2fs'%(time.time()-t0))
+                io.save_tiff(mov=frames, fname=tiff_fname)
 
             if (k+1)%4==0:
                 print('Registered %d/%d in %0.2fs'%(min((k+1)*ops['batch_size'], ops['nframes']), ops['nframes'], time.time()-t0))
+
+            all_frames[k*ops['batch_size']:(k+1)*ops['batch_size']] = frames
+
+    print(f"all_frames.shape: {all_frames.shape}")
+    # MJD ADD
+    if ops['save_segmented_tiff']:
+        # # load tiff_fname
+        # import tifffile
+        # t0 = time.time()
+        # tif_path = os.path.join(ops['fast_disk'], 'reg_tif')
+
+        # print(f'SEGMENTED TIFF: loading from {tif_path}')
+
+        # # read all tiff files in tif_path and concatenate into tiff_frames
+        # tiff_frames = []
+        # print(os.listdir(tif_path))
+
+        # # print size of files in tif_path
+        # for file in os.listdir(tif_path):
+        #     print(f"file size: {os.path.getsize(os.path.join(tif_path, file))}")
+
+        # for stack in os.listdir(tif_path):
+
+        #     # read all pages of the tiff stack with tiff_file
+        #     tiff_file = tifffile.TiffFile(os.path.join(tif_path, stack))
+
+        #     print(len(tiff_file.pages))
+        #     tiff = tiff_file.asarray()
+
+
+
+
+        #     print(f"tiff shape: {tiff.shape}")
+
+        #     # append to tiff_frames
+        #     tiff_frames.append(tiff)
+
+        # # concat tiff_frames
+        # tiff_frames = np.array(tiff_frames)
+        # tiff_frames = np.concatenate(tiff_frames, axis=0)
+
+        # print(f'SEGMENTED TIFF: loaded tiff frames {tiff_frames.shape}')
+        tiff_frames = all_frames
+        segment_fname = os.path.join(ops['save_path'], '12_avg_segmented.tif')
+
+        # chunk frames into 12 segments, and take mean of each segment
+        chunks = np.array_split(tiff_frames, 12)
+        segmented_frames = [np.mean(chunk, axis=0) for chunk in chunks]
+        segmented_frames = np.array(segmented_frames)
+        io.save_tiff(mov=segmented_frames, fname=segment_fname)
+        print(f"SEGMENTED TIFF: size {segmented_frames.shape}")
+        print('SEGMENTED TIFF: loaded + saved in %0.2fs'%(time.time()-t0))
+
+        # delete tiff_frames
+        del tiff_frames
 
     ops['yoff'], ops['xoff'], ops['corrXY'] = utils.combine_offsets_across_batches(rigid_offsets, rigid=True)
     if ops['nonrigid']:
